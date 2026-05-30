@@ -8,6 +8,7 @@ An interactive browser-based visualiser for Graph Cellular Automata (GCA). Defin
 index.html                  — viewer (2D + 3D renderer, toolbar, legend)
 graph.js                    — Graph class, SparseAdjacencyMatrix, factory functions
 visualisation/layout.js     — ForceDirectedLayout (Fruchterman-Reingold)
+evolution/evolution.js      — GraphEvolution: timestep-based topology evolution
 ```
 
 ## Live demo
@@ -111,6 +112,29 @@ new Graph({ type?: 'directed'|'undirected'|'bidirectional',
 | `buildExampleGraph()` | Default example (directed, integer values, 7 nodes with a cycle) |
 | `buildDirectedBinaryGraph()` | The original 5-node directed binary example |
 
+### `GraphEvolution`  *(in `evolution/evolution.js`)*
+
+Drives random topology changes over time. Each step either adds or removes one node; existing edges between surviving nodes are never touched.
+
+**Position-stability guarantees**
+
+- *Remove* — `Graph` tombstones the deleted slot without shifting any other index. The removed node's entry is deleted from `layout.positions`; every other entry is untouched.
+- *Add* — the new node is always appended to a fresh slot (no reuse of tombstones). Its position is seeded directly into `layout.positions` from the neighbours' centroid (or randomly if it has none). No force iterations run, so no existing node moves.
+
+```js
+// Manual step
+GraphEvolution.step(graph, layout);  // returns { action: 'add'|'remove', nodeIndex }
+
+// Auto loop
+GraphEvolution.start(graph, layout, { intervalMs: 1000, onStep: (result, stepCount) => {} });
+GraphEvolution.stop();
+GraphEvolution.isRunning();   // → boolean
+GraphEvolution.getStepCount();
+GraphEvolution.resetStepCount();
+```
+
+The toolbar exposes **▶ Evolve / ⏸ Pause**, a **Step** button for single manual steps, and a speed selector (0.25 s – 5 s). The info bar shows the current step count once evolution has started. **Reset graph** stops evolution and clears the counter.
+
 ### `ForceDirectedLayout`  *(in `visualisation/layout.js`)*
 
 ```js
@@ -148,6 +172,7 @@ new ForceDirectedLayout({ dimensions?: 2|3, iterations?: number,
 - **Dynamic legend** — updates automatically to reflect the active graph's edge type and value type
 - **Label toggle** — the **Labels** button in the toolbar shows or hides node label text in both 2D and 3D
 - **Value toggle** — the **Values** button shows or hides each node's state value below the node; formats automatically as `0`/`1` (binary), an integer, or a 2-decimal float
+- **Evolution** — **▶ Evolve / ⏸ Pause** drives automatic topology changes at a configurable interval; **Step** fires a single step manually; existing nodes never move when the graph evolves
 
 ---
 
@@ -165,5 +190,5 @@ This generalisation allows modelling phenomena that have no natural grid embeddi
 
 ## Dependencies
 
-- `graph.js` and `visualisation/layout.js` — plain JavaScript, no dependencies.
+- `graph.js`, `visualisation/layout.js`, and `evolution/evolution.js` — plain JavaScript, no dependencies.
 - [Three.js r128](https://threejs.org/) — loaded on demand from jsDelivr CDN when the 3D view is first activated.

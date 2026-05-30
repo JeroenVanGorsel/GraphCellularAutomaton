@@ -100,6 +100,20 @@
   <button id="btn-labels" class="active" onclick="toggleLabels()">Labels</button>
   <button id="btn-values"              onclick="toggleValues()">Values</button>
 
+  <span style="width:1px; height:20px; background:#30363d;"></span>
+
+  <button id="btn-evolve" onclick="toggleEvolution()">&#9654; Evolve</button>
+  <button onclick="stepEvolution()">Step</button>
+  <select id="sel-speed" onchange="onSpeedChange()"
+    style="padding:4px 8px;border-radius:6px;border:1px solid #30363d;
+           background:#21262d;color:#c9d1d9;font-size:13px;cursor:pointer;">
+    <option value="250">0.25 s</option>
+    <option value="500">0.5 s</option>
+    <option value="1000" selected>1 s</option>
+    <option value="2000">2 s</option>
+    <option value="5000">5 s</option>
+  </select>
+
   <div id="info">nodes: — &nbsp;|&nbsp; edges: —</div>
 </div>
 
@@ -124,6 +138,7 @@
 <!-- Our graph definition and layout modules -->
 <script src="graph.js"></script>
 <script src="visualisation/layout.js"></script>
+<script src="evolution/evolution.js"></script>
 
 <!-- Three.js is loaded lazily (only when the user switches to 3D view)
      so it never blocks the 2D rendering even on a slow or offline connection. -->
@@ -218,6 +233,7 @@ function _loadThreeJS() {
 }
 
 function recomputeLayout() {
+  _scene3DCentroid = null; // force a fresh world origin after deliberate re-layout
   layout = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
   positions = layout.compute(graph);
   if (currentMode === '2d') { window.fitView2D(); } else { render3D(); }
@@ -247,15 +263,70 @@ function formatState(state, valueType) {
 }
 
 function resetGraph() {
+  GraphEvolution.stop();
+  GraphEvolution.resetStepCount();
+  const btn = document.getElementById('btn-evolve');
+  btn.textContent = '▶ Evolve';
+  btn.classList.remove('active');
   graph = buildExampleGraph();
   recomputeLayout();
   updateInfoBar();
   updateLegend();
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EVOLUTION CONTROLS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _evolveOnStep(_result, _stepCount) {
+  updateInfoBar();
+  if (currentMode === '2d') {
+    window.render2D();
+  } else if (window.THREE) {
+    window.render3D();
+  }
+}
+
+function _getEvolutionInterval() {
+  return parseInt(document.getElementById('sel-speed').value, 10);
+}
+
+function toggleEvolution() {
+  const btn = document.getElementById('btn-evolve');
+  if (GraphEvolution.isRunning()) {
+    GraphEvolution.stop();
+    btn.textContent = '▶ Evolve';
+    btn.classList.remove('active');
+  } else {
+    GraphEvolution.start(graph, layout, {
+      intervalMs: _getEvolutionInterval(),
+      onStep: _evolveOnStep,
+    });
+    btn.textContent = '⏸ Pause';
+    btn.classList.add('active');
+  }
+}
+
+/** Fire a single evolution step manually. Works whether auto-loop is running or not. */
+function stepEvolution() {
+  _evolveOnStep(GraphEvolution.step(graph, layout), GraphEvolution.getStepCount());
+}
+
+/** When the speed selector changes, restart the loop at the new interval. */
+function onSpeedChange() {
+  if (!GraphEvolution.isRunning()) return;
+  GraphEvolution.stop();
+  GraphEvolution.start(graph, layout, {
+    intervalMs: _getEvolutionInterval(),
+    onStep: _evolveOnStep,
+  });
+}
+
 function updateInfoBar() {
+  const sc = GraphEvolution.getStepCount();
+  const stepPart = sc > 0 ? `  |  step: ${sc}` : '';
   document.getElementById('info').textContent =
-    `nodes: ${graph.nodeCount}  |  edges: ${graph.getEdges().length}`;
+    `nodes: ${graph.nodeCount}  |  edges: ${graph.getEdges().length}${stepPart}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -493,7 +564,8 @@ function drawArrow(ctx, x1, y1, x2, y2, nodeRadius, color) {
 // 3D RENDERER (Three.js)
 // ═══════════════════════════════════════════════════════════════════════════
 
-let threeState = null; // holds { renderer, scene, camera, controls, animId }
+let threeState = null;       // holds { renderer, scene, camera, controls, animId }
+let _scene3DCentroid = null; // fixed layout-space origin for the 3D world; cleared on re-layout/reset
 
 /**
  * Build or rebuild the Three.js scene from the current graph and layout.
@@ -501,6 +573,16 @@ let threeState = null; // holds { renderer, scene, camera, controls, animId }
  */
 window.render3D = function() {
   const container = document.getElementById('renderer-3d');
+
+  // Save the user's camera viewpoint before tearing down the scene so that
+  // repeated calls (e.g. during evolution) don't reset their orientation.
+  let _savedCam = null;
+  if (threeState && threeState.camera && threeState.controls) {
+    _savedCam = {
+      position: threeState.camera.position.clone(),
+      target:   threeState.controls.target.clone(),
+    };
+  }
 
   // Tear down any previous scene (e.g. after re-layout)
   if (threeState) {
@@ -524,10 +606,18 @@ window.render3D = function() {
   const xs3 = allPos3.map(p => p.x), ys3 = allPos3.map(p => p.y);
   const minX3 = Math.min(...xs3), maxX3 = Math.max(...xs3);
   const minY3 = Math.min(...ys3), maxY3 = Math.max(...ys3);
-  const cx3    = (minX3 + maxX3) / 2;   // layout-space centroid
-  const cy3    = (minY3 + maxY3) / 2;
   const rangeX3 = (maxX3 - minX3) || 1;
   const rangeY3 = (maxY3 - minY3) || 1;
+
+  // Lock the scene origin on first render; reuse it on every subsequent render.
+  // If we recomputed the centroid each time, every node's Three.js world position
+  // would shift whenever a node is added/removed, making camera save/restore wrong.
+  // Cleared in recomputeLayout() so a deliberate re-layout gets a fresh origin.
+  if (!_scene3DCentroid) {
+    _scene3DCentroid = { x: (minX3 + maxX3) / 2, y: (minY3 + maxY3) / 2 };
+  }
+  const cx3 = _scene3DCentroid.x;
+  const cy3 = _scene3DCentroid.y;
 
   // Camera height: graph fills the FOV with a 20% margin.
   const FOV_RAD = (60 * Math.PI) / 180;
@@ -555,6 +645,14 @@ window.render3D = function() {
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
+
+  // Restore the saved viewpoint (if any) so the user's perspective is
+  // preserved across evolution steps and other incremental scene rebuilds.
+  if (_savedCam) {
+    camera.position.copy(_savedCam.position);
+    controls.target.copy(_savedCam.target);
+    controls.update();
+  }
 
   // Ambient + directional lighting
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
