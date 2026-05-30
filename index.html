@@ -78,6 +78,34 @@
       margin-right: 6px;
       vertical-align: middle;
     }
+
+    /* ── Reset-graph dropdown ────────────────────────────────── */
+    .dropdown { position: relative; display: inline-flex; }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 4px 0;
+      z-index: 100;
+      min-width: 100%;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    .dropdown.open .dropdown-menu { display: block; }
+    .dropdown-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: none;
+      border-radius: 0;
+      padding: 6px 14px;
+      background: transparent;
+    }
+    .dropdown-menu button:hover { background: #30363d; }
   </style>
 </head>
 <body>
@@ -92,7 +120,13 @@
   <span style="width:1px; height:20px; background:#30363d;"></span>
 
   <button onclick="recomputeLayout()">Re-layout</button>
-  <button onclick="resetGraph()">Reset graph</button>
+  <div class="dropdown" id="dropdown-reset">
+    <button onclick="toggleResetDropdown(event)">Reset graph &#9662;</button>
+    <div class="dropdown-menu">
+      <button onclick="resetGraph('example')">Example graph</button>
+      <button onclick="resetGraph('lattice2d')">Binary 2D lattice (5&#xD7;5)</button>
+    </div>
+  </div>
   <button onclick="fitView()">Fit view</button>
 
   <span style="width:1px; height:20px; background:#30363d;"></span>
@@ -277,14 +311,44 @@ function formatState(state, valueType) {
   return String(state);
 }
 
-function resetGraph() {
+function toggleResetDropdown(e) {
+  e.stopPropagation();
+  document.getElementById('dropdown-reset').classList.toggle('open');
+}
+
+document.addEventListener('click', function() {
+  document.getElementById('dropdown-reset').classList.remove('open');
+});
+
+function resetGraph(preset) {
+  document.getElementById('dropdown-reset').classList.remove('open');
   GraphEvolution.stop();
   GraphEvolution.resetStepCount();
   const btn = document.getElementById('btn-evolve');
   btn.textContent = '▶ Evolve';
   btn.classList.remove('active');
-  graph = buildExampleGraph();
-  recomputeLayout();
+
+  if (preset === 'lattice2d') {
+    const rows = 5, cols = 5;
+    graph = buildBinaryLattice2D(rows, cols);
+    _scene3DCentroid = null;
+    layout = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
+    layout.liveSpeedMultiplier =
+      parseFloat(document.getElementById('slider-dynamic-speed').value) / 10;
+    const spacing = Math.min(150 / Math.max(rows - 1, 1), 150 / Math.max(cols - 1, 1));
+    const halfR = (rows - 1) / 2;
+    const halfC = (cols - 1) / 2;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        layout.positions.set(r * cols + c, [(c - halfC) * spacing, (r - halfR) * spacing, 0]);
+      }
+    }
+    positions = layout.positions;
+    if (currentMode === '2d') { window.fitView2D(); } else { render3D(); }
+  } else {
+    graph = buildExampleGraph();
+    recomputeLayout();
+  }
   updateInfoBar();
   updateLegend();
 }

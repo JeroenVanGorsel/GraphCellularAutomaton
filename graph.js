@@ -468,6 +468,34 @@ function buildDirectedBinaryGraph() {
   return g;
 }
 
+/**
+ * Build an undirected binary 2D lattice graph with nearest-neighbour edges.
+ *
+ * All node states start at 0.  Edges connect each node to its right and bottom
+ * neighbour so that exactly (rows-1)*cols + rows*(cols-1) edges are created.
+ *
+ * @param {number} [rows=5]
+ * @param {number} [cols=5]
+ * @returns {Graph}
+ */
+function buildBinaryLattice2D(rows = 5, cols = 5) {
+  const g = new Graph({ type: 'undirected', valueType: 'binary' });
+  const ids = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      ids.push(g.addNode({ label: `${r},${c}`, state: 0 }));
+    }
+  }
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const id = ids[r * cols + c];
+      if (c + 1 < cols) g.addEdge(id, ids[r * cols + c + 1]);
+      if (r + 1 < rows) g.addEdge(id, ids[(r + 1) * cols + c]);
+    }
+  }
+  return g;
+}
+
 // Export for use in other modules (browser globals or ES module environments)
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -476,6 +504,7 @@ if (typeof module !== 'undefined' && module.exports) {
     DirectedGraph,
     buildExampleGraph,
     buildDirectedBinaryGraph,
+    buildBinaryLattice2D,
   };
 } else {
   window.GraphCA = window.GraphCA || {};
@@ -485,5 +514,6 @@ if (typeof module !== 'undefined' && module.exports) {
     DirectedGraph,
     buildExampleGraph,
     buildDirectedBinaryGraph,
+    buildBinaryLattice2D,
   });
 }
