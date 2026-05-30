@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Graph Cellular Automata Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0f14;
+      color: #c9d1d9;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Top toolbar ─────────────────────────────────────── */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    #toolbar h1 { font-size: 15px; font-weight: 600; color: #e6edf3; margin-right: 8px; }
+
+    button {
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      background: #21262d;
+      color: #c9d1d9;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button:hover { background: #30363d; }
+    button.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+
+    #info {
+      font-size: 12px;
+      color: #8b949e;
+      margin-left: auto;
+    }
+
+    /* ── Main canvas area ────────────────────────────────── */
+    #canvas-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    canvas { display: block; }
+
+    /* ── Overlay legend ──────────────────────────────────── */
+    #legend {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      background: rgba(22, 27, 34, 0.85);
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.8;
+      pointer-events: none;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ────────────────────────────── TOOLBAR ──────────────────────────────── -->
+<div id="toolbar">
+  <h1>Graph Cellular Automata</h1>
+
+  <button id="btn-2d" class="active" onclick="setMode('2d')">2D View</button>
+  <button id="btn-3d"              onclick="setMode('3d')">3D View</button>
+
+  <span style="width:1px; height:20px; background:#30363d;"></span>
+
+  <button onclick="recomputeLayout()">Re-layout</button>
+  <button onclick="resetGraph()">Reset graph</button>
+  <button onclick="fitView()">Fit view</button>
+
+  <div id="info">nodes: — &nbsp;|&nbsp; edges: —</div>
+</div>
+
+<!-- ─────────────────────────── CANVAS ──────────────────────────────────── -->
+<div id="canvas-container">
+  <canvas id="canvas-2d"></canvas>
+  <!-- Three.js mounts its renderer here -->
+  <div id="renderer-3d" style="display:none; width:100%; height:100%;"></div>
+</div>
+
+<!-- ─────────────────────────── LEGEND ──────────────────────────────────── -->
+<div id="legend">
+  <!-- Filled dynamically by updateLegend() -->
+  <div style="margin-top:6px; color:#8b949e;">
+    3D: drag to rotate · scroll to zoom<br>
+    2D: scroll to zoom · drag to pan
+  </div>
+</div>
+
+<!-- ───────────────────────── SCRIPTS ───────────────────────────────────── -->
+
+<!-- Our graph definition and layout modules -->
+<script src="graph.js"></script>
+<script src="visualisation/layout.js"></script>
+
+<!-- Three.js is loaded lazily (only when the user switches to 3D view)
+     so it never blocks the 2D rendering even on a slow or offline connection. -->
+
+<!-- Catch any uncaught JS errors and surface them as a visible banner. -->
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  let el = document.getElementById('_errBanner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = '_errBanner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px 14px;' +
+      'background:#8b0000;color:#fff;font:13px monospace;z-index:9999;white-space:pre-wrap';
+    document.body.appendChild(el);
+  }
+  el.textContent += `\n${msg}  [${src}:${line}]`;
+  return false;
+};
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDERER ENTRY POINT
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// This script:
+//  1. Builds the initial example graph via graph.js.
+//  2. Computes a 3D layout via layout.js.
+//  3. Renders it either on an HTML5 Canvas (2D) or with Three.js (3D).
+//  4. Lets the user switch modes and re-compute the layout.
+//
+// Coordinate spaces
+//  - layout.js produces positions in a logical [-100, 100] box (each axis).
+//  - The 2D renderer maps that to canvas pixels with pan/zoom.
+//  - The 3D renderer uses those coordinates directly as Three.js world units.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// graph.js and layout.js expose their classes both as window.GraphCA.*
+// and as top-level global declarations, so no re-importing is needed here.
+
+// ── Shared state ────────────────────────────────────────────────────────────
+let graph   = buildExampleGraph();
+let layout  = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
+let positions;   // Map<nodeIndex, [x, y, z]>
+
+let currentMode = '2d';
+
+// Bootstrap runs at the bottom of this script, after render2D and render3D are defined.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODE SWITCHING
+// ═══════════════════════════════════════════════════════════════════════════
+
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('btn-2d').classList.toggle('active', mode === '2d');
+  document.getElementById('btn-3d').classList.toggle('active', mode === '3d');
+  document.getElementById('canvas-2d').style.display   = mode === '2d' ? 'block' : 'none';
+  document.getElementById('renderer-3d').style.display = mode === '3d' ? 'block' : 'none';
+
+  if (mode === '3d') {
+    if (window.THREE) {
+      window.render3D();
+    } else {
+      document.getElementById('btn-3d').textContent = '3D (loading…)';
+      _loadThreeJS().then(() => {
+        document.getElementById('btn-3d').textContent = '3D View';
+        window.render3D();
+      });
+    }
+  } else {
+    window.fitView2D ? window.fitView2D() : window.render2D();
+  }
+}
+
+function _loadThreeJS() {
+  return new Promise((resolve, reject) => {
+    const s1 = document.createElement('script');
+    s1.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
+    s1.onerror = reject;
+    s1.onload = () => {
+      const s2 = document.createElement('script');
+      s2.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js';
+      s2.onerror = reject;
+      s2.onload  = resolve;
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s1);
+  });
+}
+
+function recomputeLayout() {
+  layout = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
+  positions = layout.compute(graph);
+  if (currentMode === '2d') { window.fitView2D(); } else { render3D(); }
+}
+
+function fitView() {
+  if (currentMode === '2d') window.fitView2D();
+}
+
+function resetGraph() {
+  graph = buildExampleGraph();
+  recomputeLayout();
+  updateInfoBar();
+  updateLegend();
+}
+
+function updateInfoBar() {
+  document.getElementById('info').textContent =
+    `nodes: ${graph.nodeCount}  |  edges: ${graph.getEdges().length}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COLOR HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Compute min/max state values across all active nodes.
+ * @param {Graph} g
+ * @returns {{ min: number, max: number }}
+ */
+function computeStateRange(g) {
+  const states = g.getActiveNodes().map(i => g.getNode(i).state ?? 0);
+  return { min: Math.min(...states), max: Math.max(...states) };
+}
+
+/**
+ * Map a node's state to CSS and hex colors.
+ * - binary:          blue (#58a6ff) for 0, orange-red (#f78166) for 1
+ * - integer / float: gradient from blue (low) to orange-red (high)
+ *
+ * @param {number} state
+ * @param {{ min: number, max: number }} range - Pre-computed from computeStateRange()
+ * @param {'binary'|'integer'|'float'} valueType
+ * @returns {{ fill: string, stroke: string, hex: number }}
+ */
+function stateToColor(state, range, valueType) {
+  let r, g, b;
+  if (valueType === 'binary') {
+    if (state) { r = 0xf7; g = 0x81; b = 0x66; }
+    else        { r = 0x58; g = 0xa6; b = 0xff; }
+  } else {
+    const t = range.max === range.min ? 0.5 : (state - range.min) / (range.max - range.min);
+    r = Math.round(0x58 + t * (0xf7 - 0x58));
+    g = Math.round(0xa6 + t * (0x81 - 0xa6));
+    b = Math.round(0xff + t * (0x66 - 0xff));
+  }
+  const fill   = `rgb(${r},${g},${b})`;
+  const stroke = `rgb(${Math.min(255, r + 30)},${Math.min(255, g + 30)},${Math.min(255, b + 30)})`;
+  const hex    = (r << 16) | (g << 8) | b;
+  return { fill, stroke, hex };
+}
+
+/**
+ * Rebuild the on-screen legend to match the current graph's type and valueType.
+ */
+function updateLegend() {
+  const legend = document.getElementById('legend');
+  let html = '';
+
+  if (graph.valueType === 'binary') {
+    html += `<div><span class="legend-dot" style="background:#58a6ff;"></span>State = 0</div>`;
+    html += `<div><span class="legend-dot" style="background:#f78166;"></span>State = 1</div>`;
+  } else {
+    const label = graph.valueType === 'integer' ? 'Integer' : 'Float';
+    html += `<div style="display:flex;align-items:center;gap:6px;">`;
+    html += `<div style="width:60px;height:10px;border-radius:5px;flex-shrink:0;`;
+    html += `background:linear-gradient(to right,#58a6ff,#f78166);"></div>`;
+    html += `<span>${label} state (low → high)</span></div>`;
+  }
+
+  const edgeSymbols = { directed: '→', undirected: '—', bidirectional: '↔' };
+  html += `<div style="margin-top:4px;">${edgeSymbols[graph.type] ?? ''} ${graph.type}</div>`;
+
+  html += `<div style="margin-top:6px; color:#8b949e;">`;
+  html += `3D: drag to rotate · scroll to zoom<br>`;
+  html += `2D: scroll to zoom · drag to pan</div>`;
+
+  legend.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2D CANVAS RENDERER
+// ═══════════════════════════════════════════════════════════════════════════
+
+(function setup2D() {
+  const canvas = document.getElementById('canvas-2d');
+
+  // Pan / zoom state — captured in closure so render2D and event handlers share them
+  let offsetX = 0, offsetY = 0, scale = 1;
+  let dragging = false, lastMX = 0, lastMY = 0;
+
+  // Compute scale/offset so all nodes fit in ~80% of the canvas, then redraw.
+  window.fitView2D = function() {
+    if (!positions) return;
+    const allPos = layout.getAllPositions();
+    if (allPos.length === 0) return;
+    const xs = allPos.map(p => p.x);
+    const ys = allPos.map(p => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const rangeX = (maxX - minX) || 1;
+    const rangeY = (maxY - minY) || 1;
+    scale   = Math.min(canvas.width * 0.8 / rangeX, canvas.height * 0.8 / rangeY);
+    offsetX = -((minX + maxX) / 2) * scale;
+    offsetY = -((minY + maxY) / 2) * scale;
+    window.render2D();
+  };
+
+  // Define render2D first so resizeCanvas (called below) can already invoke it
+  window.render2D = function() {
+    if (!positions) return;
+    const canvas = document.getElementById('canvas-2d');
+    const ctx    = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // World → screen transform:
+    //   layout coords are in ~[-100, 100]; map to canvas center with pan/zoom.
+    const toScreen = (wx, wy) => ({
+      sx: W / 2 + offsetX + wx * scale,
+      sy: H / 2 + offsetY + wy * scale,
+    });
+
+    const NODE_R = Math.max(6, Math.min(scale * 6, 30));
+
+    // ── Draw edges ────────────────────────────────────────────
+    ctx.lineWidth = 1.2;
+    for (const [from, to] of graph.getEdges()) {
+      const pf = layout.getPosition(from);
+      const pt = layout.getPosition(to);
+      const { sx: x1, sy: y1 } = toScreen(pf.x, pf.y);
+      const { sx: x2, sy: y2 } = toScreen(pt.x, pt.y);
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#444c56';
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      if (graph.type === 'directed') {
+        drawArrow(ctx, x1, y1, x2, y2, NODE_R, '#666e79');
+      } else if (graph.type === 'bidirectional') {
+        drawArrow(ctx, x1, y1, x2, y2, NODE_R, '#666e79');
+        drawArrow(ctx, x2, y2, x1, y1, NODE_R, '#666e79');
+      }
+      // 'undirected': no arrowheads
+    }
+
+    // ── Draw nodes ────────────────────────────────────────────
+    const stateRange = computeStateRange(graph);
+    for (const idx of graph.getActiveNodes()) {
+      const pos  = layout.getPosition(idx);
+      const meta = graph.getNode(idx);
+      const { sx, sy } = toScreen(pos.x, pos.y);
+      const colors = stateToColor(meta.state ?? 0, stateRange, graph.valueType);
+
+      ctx.beginPath();
+      ctx.arc(sx, sy, NODE_R, 0, Math.PI * 2);
+      ctx.fillStyle = colors.fill;
+      ctx.fill();
+      ctx.strokeStyle = colors.stroke;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Label
+      ctx.fillStyle = '#e6edf3';
+      ctx.font = `${Math.max(9, NODE_R * 1.1)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(meta.label ?? idx, sx, sy);
+    }
+  };
+
+  window.resizeCanvas2D = function() {
+    const container = document.getElementById('canvas-container');
+    canvas.width  = container.clientWidth;
+    canvas.height = container.clientHeight;
+    if (currentMode === '2d') window.render2D();
+  };
+  window.addEventListener('resize', window.resizeCanvas2D);
+
+  canvas.addEventListener('mousedown', e => {
+    dragging = true; lastMX = e.clientX; lastMY = e.clientY;
+  });
+  canvas.addEventListener('mouseup', () => { dragging = false; });
+  canvas.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    offsetX += e.clientX - lastMX;
+    offsetY += e.clientY - lastMY;
+    lastMX = e.clientX; lastMY = e.clientY;
+    window.render2D();
+  });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    scale = Math.max(0.1, Math.min(20, scale * factor));
+    window.render2D();
+  }, { passive: false });
+})();
+
+/**
+ * Draw a small arrowhead at the end of the line (x1,y1)→(x2,y2).
+ * The tip is inset by `nodeRadius` so it doesn't overlap the node circle.
+ */
+function drawArrow(ctx, x1, y1, x2, y2, nodeRadius, color) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const ux = dx / len, uy = dy / len;
+
+  // Tip of the arrow = edge endpoint minus nodeRadius along the direction
+  const tipX = x2 - ux * nodeRadius;
+  const tipY = y2 - uy * nodeRadius;
+
+  const headLen = Math.max(6, nodeRadius * 0.8);
+  const angle   = Math.atan2(dy, dx);
+
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(
+    tipX - headLen * Math.cos(angle - Math.PI / 6),
+    tipY - headLen * Math.sin(angle - Math.PI / 6)
+  );
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(
+    tipX - headLen * Math.cos(angle + Math.PI / 6),
+    tipY - headLen * Math.sin(angle + Math.PI / 6)
+  );
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = 1.2;
+  ctx.stroke();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3D RENDERER (Three.js)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let threeState = null; // holds { renderer, scene, camera, controls, animId }
+
+/**
+ * Build or rebuild the Three.js scene from the current graph and layout.
+ * Called when switching to 3D mode or after a re-layout.
+ */
+window.render3D = function() {
+  const container = document.getElementById('renderer-3d');
+
+  // Tear down any previous scene (e.g. after re-layout)
+  if (threeState) {
+    cancelAnimationFrame(threeState.animId);
+    threeState.renderer.dispose();
+    container.innerHTML = '';
+  }
+
+  const W = container.clientWidth  || window.innerWidth;
+  const H = container.clientHeight || (window.innerHeight - 50);
+
+  // ── Compute layout bounds and centroid ───────────────────
+  // The 2D canvas has y increasing downward; Three.js has y increasing upward.
+  // We negate y when placing all 3D objects AND subtract the centroid so that
+  // the graph centre sits exactly at the world origin. This means OrbitControls'
+  // default target (0,0,0) is correct from the start — avoiding the bug where
+  // OrbitControls calls this.update() during construction with target=(0,0,0)
+  // and sets camera.lookAt(0,0,0), which would mis-orient the camera when the
+  // graph centroid isn't at the origin.
+  const allPos3 = layout.getAllPositions();
+  const xs3 = allPos3.map(p => p.x), ys3 = allPos3.map(p => p.y);
+  const minX3 = Math.min(...xs3), maxX3 = Math.max(...xs3);
+  const minY3 = Math.min(...ys3), maxY3 = Math.max(...ys3);
+  const cx3    = (minX3 + maxX3) / 2;   // layout-space centroid
+  const cy3    = (minY3 + maxY3) / 2;
+  const rangeX3 = (maxX3 - minX3) || 1;
+  const rangeY3 = (maxY3 - minY3) || 1;
+
+  // Camera height: graph fills the FOV with a 20% margin.
+  const FOV_RAD = (60 * Math.PI) / 180;
+  const camZ3   = Math.max(rangeX3 / (W / H), rangeY3) / (2 * Math.tan(FOV_RAD / 2)) * 1.2;
+
+  // Helper: convert a layout position to centred Three.js coords.
+  // x stays the same (right = right), y is negated (canvas-down → Three.js-down),
+  // centroid is subtracted so the scene is anchored at the world origin.
+  const to3D = (x, y, z) => ({ x: x - cx3, y: -(y - cy3), z: z ?? 0 });
+
+  // ── Scene setup ───────────────────────────────────────────
+  const scene    = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d0f14);
+  scene.fog       = new THREE.Fog(0x0d0f14, camZ3 * 2, camZ3 * 4);
+
+  const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, camZ3 * 6);
+  camera.position.set(0, 0, camZ3);   // directly above world origin = graph centroid
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(W, H);
+  container.appendChild(renderer.domElement);
+
+  // OrbitControls default target is (0,0,0) = graph centroid. No override needed.
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  // Ambient + directional lighting
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(100, 200, 150);
+  scene.add(dirLight);
+
+  // ── Nodes ─────────────────────────────────────────────────
+  const NODE_RADIUS = 3;
+  const nodeGeom    = new THREE.SphereGeometry(NODE_RADIUS, 16, 12);
+  const stateRange3 = computeStateRange(graph);
+
+  for (const idx of graph.getActiveNodes()) {
+    const pos    = layout.getPosition(idx);
+    const meta   = graph.getNode(idx);
+    const colors = stateToColor(meta.state ?? 0, stateRange3, graph.valueType);
+    const mat    = new THREE.MeshBasicMaterial({ color: colors.hex });
+    const mesh = new THREE.Mesh(nodeGeom, mat);
+    const p3 = to3D(pos.x, pos.y, pos.z);
+    mesh.position.set(p3.x, p3.y, p3.z);
+    scene.add(mesh);
+
+    scene.add(makeTextSprite(meta.label ?? String(idx), p3));
+  }
+
+  // ── Edges (line segments + optional arrow cones) ──────────
+  const CONE_HEIGHT = 4, CONE_RADIUS = 1.2;
+  const coneGeom = new THREE.ConeGeometry(CONE_RADIUS, CONE_HEIGHT, 8);
+  const lineMat  = new THREE.LineBasicMaterial({ color: 0x444c56 });
+  const arrowMat = new THREE.MeshPhongMaterial({ color: 0x666e79 });
+
+  function addCone3D(vFrom, vTo, t) {
+    const dir  = new THREE.Vector3().subVectors(vTo, vFrom).normalize();
+    const cone = new THREE.Mesh(coneGeom, arrowMat);
+    cone.position.copy(new THREE.Vector3().lerpVectors(vFrom, vTo, t));
+    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    scene.add(cone);
+  }
+
+  for (const [from, to] of graph.getEdges()) {
+    const pf = layout.getPosition(from);
+    const pt = layout.getPosition(to);
+
+    const f3 = to3D(pf.x, pf.y, pf.z);
+    const t3 = to3D(pt.x, pt.y, pt.z);
+    const vFrom = new THREE.Vector3(f3.x, f3.y, f3.z);
+    const vTo   = new THREE.Vector3(t3.x, t3.y, t3.z);
+    if (vFrom.distanceTo(vTo) < 0.001) continue;
+
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([vFrom, vTo]);
+    scene.add(new THREE.Line(lineGeom, lineMat));
+
+    if (graph.type === 'directed') {
+      addCone3D(vFrom, vTo, 0.8);
+    } else if (graph.type === 'bidirectional') {
+      addCone3D(vFrom, vTo, 0.75);
+      addCone3D(vTo, vFrom, 0.75);
+    }
+    // 'undirected': no cones
+  }
+
+  // ── Animate ────────────────────────────────────────────────
+  function animate() {
+    threeState.animId = requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+
+  function onResize() {
+    const W2 = container.clientWidth;
+    const H2 = container.clientHeight;
+    camera.aspect = W2 / H2;
+    camera.updateProjectionMatrix();
+    renderer.setSize(W2, H2);
+  }
+  window.addEventListener('resize', onResize);
+
+  threeState = { renderer, scene, camera, controls, animId: null };
+  animate();
+};
+
+// ── Bootstrap — runs last, after render2D and render3D are both defined ──────
+try {
+  positions = layout.compute(graph);
+  updateInfoBar();
+  updateLegend();
+  // Defer one frame so the browser finishes flex layout before we measure sizes.
+  requestAnimationFrame(() => {
+    window.resizeCanvas2D();
+    window.fitView2D();
+  });
+} catch (e) {
+  document.getElementById('info').textContent = 'Init error — see red banner';
+  throw e;
+}
+
+// ── Minimal canvas-based text sprite for node labels in 3D ──────────────────
+function makeTextSprite(text, pos) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64; canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(0,0,0,0)';
+  ctx.fillRect(0, 0, 64, 32);
+  ctx.fillStyle = '#e6edf3';
+  ctx.font = 'bold 18px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 32, 16);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.set(pos.x, pos.y + 5, (pos.z ?? 0) + 0.5);
+  sprite.scale.set(12, 6, 1);
+  return sprite;
+}
+</script>
+</body>
+</html>
