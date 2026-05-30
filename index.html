@@ -95,6 +95,11 @@
   <button onclick="resetGraph()">Reset graph</button>
   <button onclick="fitView()">Fit view</button>
 
+  <span style="width:1px; height:20px; background:#30363d;"></span>
+
+  <button id="btn-labels" class="active" onclick="toggleLabels()">Labels</button>
+  <button id="btn-values"              onclick="toggleValues()">Values</button>
+
   <div id="info">nodes: — &nbsp;|&nbsp; edges: —</div>
 </div>
 
@@ -165,6 +170,8 @@ let layout  = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
 let positions;   // Map<nodeIndex, [x, y, z]>
 
 let currentMode = '2d';
+let showLabels  = true;
+let showValues  = false;
 
 // Bootstrap runs at the bottom of this script, after render2D and render3D are defined.
 
@@ -218,6 +225,25 @@ function recomputeLayout() {
 
 function fitView() {
   if (currentMode === '2d') window.fitView2D();
+}
+
+function toggleLabels() {
+  showLabels = !showLabels;
+  document.getElementById('btn-labels').classList.toggle('active', showLabels);
+  if (currentMode === '2d') { window.render2D(); } else { window.render3D(); }
+}
+
+function toggleValues() {
+  showValues = !showValues;
+  document.getElementById('btn-values').classList.toggle('active', showValues);
+  if (currentMode === '2d') { window.render2D(); } else { window.render3D(); }
+}
+
+/** Format a node state value for display, respecting the graph's valueType. */
+function formatState(state, valueType) {
+  if (state == null) return '—';
+  if (valueType === 'float') return Number(state).toFixed(2);
+  return String(state);
 }
 
 function resetGraph() {
@@ -386,12 +412,21 @@ function updateLegend() {
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      // Label
-      ctx.fillStyle = '#e6edf3';
-      ctx.font = `${Math.max(9, NODE_R * 1.1)}px monospace`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(meta.label ?? idx, sx, sy);
+      if (showLabels) {
+        ctx.fillStyle = '#e6edf3';
+        ctx.font = `${Math.max(9, NODE_R * 1.1)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(meta.label ?? idx, sx, sy);
+      }
+
+      if (showValues) {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = `${Math.max(8, NODE_R * 0.9)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(formatState(meta.state, graph.valueType), sx, sy + NODE_R + 3);
+      }
     }
   };
 
@@ -542,7 +577,8 @@ window.render3D = function() {
     mesh.position.set(p3.x, p3.y, p3.z);
     scene.add(mesh);
 
-    scene.add(makeTextSprite(meta.label ?? String(idx), p3));
+    if (showLabels) scene.add(makeTextSprite(meta.label ?? String(idx), p3, 5));
+    if (showValues) scene.add(makeTextSprite(formatState(meta.state, graph.valueType), p3, -7, '#8b949e'));
   }
 
   // ── Edges (line segments + optional arrow cones) ──────────
@@ -617,13 +653,13 @@ try {
 }
 
 // ── Minimal canvas-based text sprite for node labels in 3D ──────────────────
-function makeTextSprite(text, pos) {
+function makeTextSprite(text, pos, yOffset = 5, color = '#e6edf3') {
   const canvas = document.createElement('canvas');
   canvas.width = 64; canvas.height = 32;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = 'rgba(0,0,0,0)';
   ctx.fillRect(0, 0, 64, 32);
-  ctx.fillStyle = '#e6edf3';
+  ctx.fillStyle = color;
   ctx.font = 'bold 18px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -632,7 +668,7 @@ function makeTextSprite(text, pos) {
   const tex = new THREE.CanvasTexture(canvas);
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
   const sprite = new THREE.Sprite(mat);
-  sprite.position.set(pos.x, pos.y + 5, (pos.z ?? 0) + 0.5);
+  sprite.position.set(pos.x, pos.y + yOffset, (pos.z ?? 0) + 0.5);
   sprite.scale.set(12, 6, 1);
   return sprite;
 }
