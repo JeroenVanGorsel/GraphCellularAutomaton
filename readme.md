@@ -6,7 +6,10 @@ An interactive browser-based visualiser for Graph Cellular Automata (GCA). Defin
 
 ```
 index.html                  — viewer (2D + 3D renderer, toolbar, legend)
-graph.js                    — Graph class, SparseAdjacencyMatrix, factory functions
+graphs/
+  graph.js                  — Graph class and SparseAdjacencyMatrix (core data structures)
+  presets.js                — preset graph factory functions (the Reset-graph library)
+  graphs.md                 — graphs subfolder documentation and how to add new presets
 visualisation/layout.js     — ForceDirectedLayout (Fruchterman-Reingold)
 evolution/evolution.js      — GraphEvolution: timestep-based topology evolution
 ```
@@ -105,12 +108,15 @@ new Graph({ type?: 'directed'|'undirected'|'bidirectional',
 
 `DirectedGraph` is kept as a backward-compatible alias for `new Graph({ type: 'directed', valueType: 'binary' })`.
 
-### Factory functions
+### Preset factory functions  *(in `graphs/presets.js`)*
 
 | Function | Returns |
 |---|---|
-| `buildExampleGraph()` | Default example (directed, integer values, 7 nodes with a cycle) |
-| `buildDirectedBinaryGraph()` | The original 5-node directed binary example |
+| `buildExampleGraph()` | Default example: directed, integer values, 7 nodes with a cycle |
+| `buildDirectedBinaryGraph()` | Original 5-node directed binary example |
+| `buildBinaryLattice2D(rows?, cols?)` | Undirected binary 2D lattice; default 5×5; all states 0; pre-computed grid positions |
+
+Presets that set `graph.positions` (`Map<nodeIndex, [x, y, z]>`) bypass the force-directed layout so the viewer displays a deterministic starting arrangement.  See `graphs/graphs.md` for the full preset reference and instructions for adding new ones.
 
 ### `GraphEvolution`  *(in `evolution/evolution.js`)*
 
