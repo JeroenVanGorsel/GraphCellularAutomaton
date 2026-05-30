@@ -114,6 +114,14 @@
     <option value="5000">5 s</option>
   </select>
 
+  <span style="width:1px; height:20px; background:#30363d;"></span>
+  <button id="btn-dynamic" onclick="toggleDynamicSpacing()" title="Continuously run force-directed layout so nodes drift to their optimal positions">Dynamic Spacing</button>
+  <label for="slider-dynamic-speed" style="font-size:12px;color:#8b949e;">Speed</label>
+  <input type="range" id="slider-dynamic-speed" min="1" max="20" value="10" step="1"
+    oninput="onDynamicSpeedChange(this.value)"
+    style="width:72px;cursor:pointer;vertical-align:middle;"
+    title="Dynamic layout speed (1 = slow · 10 = default · 20 = fast)">
+
   <div id="info">nodes: — &nbsp;|&nbsp; edges: —</div>
 </div>
 
@@ -184,9 +192,11 @@ let graph   = buildExampleGraph();
 let layout  = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
 let positions;   // Map<nodeIndex, [x, y, z]>
 
-let currentMode = '2d';
-let showLabels  = true;
-let showValues  = false;
+let currentMode    = '2d';
+let showLabels     = true;
+let showValues     = false;
+let dynamicSpacing = false;
+let _dynamicAnimId = null; // rAF id for the 2D dynamic-layout loop
 
 // Bootstrap runs at the bottom of this script, after render2D and render3D are defined.
 
@@ -202,6 +212,7 @@ function setMode(mode) {
   document.getElementById('renderer-3d').style.display = mode === '3d' ? 'block' : 'none';
 
   if (mode === '3d') {
+    _stop2DAnimLoop();
     if (window.THREE) {
       window.render3D();
     } else {
@@ -212,6 +223,7 @@ function setMode(mode) {
       });
     }
   } else {
+    if (dynamicSpacing) _start2DAnimLoop();
     window.fitView2D ? window.fitView2D() : window.render2D();
   }
 }
@@ -235,7 +247,10 @@ function _loadThreeJS() {
 function recomputeLayout() {
   _scene3DCentroid = null; // force a fresh world origin after deliberate re-layout
   layout = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
+  layout.liveSpeedMultiplier =
+    parseFloat(document.getElementById('slider-dynamic-speed').value) / 10;
   positions = layout.compute(graph);
+  if (dynamicSpacing) layout.boostTemperature();
   if (currentMode === '2d') { window.fitView2D(); } else { render3D(); }
 }
 
@@ -279,6 +294,7 @@ function resetGraph() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function _evolveOnStep(_result, _stepCount) {
+  if (dynamicSpacing) layout.boostTemperature();
   updateInfoBar();
   if (currentMode === '2d') {
     window.render2D();
@@ -320,6 +336,37 @@ function onSpeedChange() {
     intervalMs: _getEvolutionInterval(),
     onStep: _evolveOnStep,
   });
+}
+
+function toggleDynamicSpacing() {
+  dynamicSpacing = !dynamicSpacing;
+  document.getElementById('btn-dynamic').classList.toggle('active', dynamicSpacing);
+  if (dynamicSpacing) {
+    layout.boostTemperature();
+    if (currentMode === '2d') _start2DAnimLoop();
+    // 3D: the existing animate() loop checks dynamicSpacing each frame automatically
+  } else {
+    _stop2DAnimLoop();
+  }
+}
+
+function _start2DAnimLoop() {
+  if (_dynamicAnimId !== null) return;
+  function _loop() {
+    if (!dynamicSpacing || currentMode !== '2d') { _dynamicAnimId = null; return; }
+    layout.tick(graph);
+    window.render2D();
+    _dynamicAnimId = requestAnimationFrame(_loop);
+  }
+  _dynamicAnimId = requestAnimationFrame(_loop);
+}
+
+function _stop2DAnimLoop() {
+  if (_dynamicAnimId !== null) { cancelAnimationFrame(_dynamicAnimId); _dynamicAnimId = null; }
+}
+
+function onDynamicSpeedChange(val) {
+  layout.liveSpeedMultiplier = val / 10;
 }
 
 function updateInfoBar() {
@@ -661,64 +708,139 @@ window.render3D = function() {
   scene.add(dirLight);
 
   // ── Nodes ─────────────────────────────────────────────────
-  const NODE_RADIUS = 3;
-  const nodeGeom    = new THREE.SphereGeometry(NODE_RADIUS, 16, 12);
-  const stateRange3 = computeStateRange(graph);
+  const NODE_RADIUS  = 3;
+  const nodeGeom     = new THREE.SphereGeometry(NODE_RADIUS, 16, 12);
+  const stateRange3  = computeStateRange(graph);
+  const nodeMeshes   = new Map(); // nodeIndex → Mesh  (needed for per-frame position updates)
+  const labelSprites = new Map(); // nodeIndex → Sprite
+  const valueSprites = new Map(); // nodeIndex → Sprite
 
   for (const idx of graph.getActiveNodes()) {
     const pos    = layout.getPosition(idx);
     const meta   = graph.getNode(idx);
     const colors = stateToColor(meta.state ?? 0, stateRange3, graph.valueType);
     const mat    = new THREE.MeshBasicMaterial({ color: colors.hex });
-    const mesh = new THREE.Mesh(nodeGeom, mat);
-    const p3 = to3D(pos.x, pos.y, pos.z);
+    const mesh   = new THREE.Mesh(nodeGeom, mat);
+    const p3     = to3D(pos.x, pos.y, pos.z);
     mesh.position.set(p3.x, p3.y, p3.z);
     scene.add(mesh);
+    nodeMeshes.set(idx, mesh);
 
-    if (showLabels) scene.add(makeTextSprite(meta.label ?? String(idx), p3, 5));
-    if (showValues) scene.add(makeTextSprite(formatState(meta.state, graph.valueType), p3, -7, '#8b949e'));
+    if (showLabels) {
+      const s = makeTextSprite(meta.label ?? String(idx), p3, 5);
+      scene.add(s);
+      labelSprites.set(idx, s);
+    }
+    if (showValues) {
+      const s = makeTextSprite(formatState(meta.state, graph.valueType), p3, -7, '#8b949e');
+      scene.add(s);
+      valueSprites.set(idx, s);
+    }
   }
 
-  // ── Edges (line segments + optional arrow cones) ──────────
+  // ── Edges (single LineSegments with updatable buffer + optional arrow cones) ─
   const CONE_HEIGHT = 4, CONE_RADIUS = 1.2;
   const coneGeom = new THREE.ConeGeometry(CONE_RADIUS, CONE_HEIGHT, 8);
   const lineMat  = new THREE.LineBasicMaterial({ color: 0x444c56 });
   const arrowMat = new THREE.MeshPhongMaterial({ color: 0x666e79 });
 
-  function addCone3D(vFrom, vTo, t) {
+  const edges3D      = graph.getEdges();    // stable reference for this scene's lifetime
+  const arrowCones   = [];                  // { cone, fromIdx, toIdx, t } — for per-frame updates
+
+  // Build a single LineSegments object with a dynamic buffer so we can update
+  // all edge positions in one GPU upload each frame instead of per-object.
+  let edgeLineSegs = null;
+  if (edges3D.length > 0) {
+    const edgePosArr = new Float32Array(edges3D.length * 6); // 2 vertices × 3 floats each
+    let ei = 0;
+    for (const [from, to] of edges3D) {
+      const pf = layout.getPosition(from), pt = layout.getPosition(to);
+      const f3 = to3D(pf.x, pf.y, pf.z),  t3 = to3D(pt.x, pt.y, pt.z);
+      edgePosArr[ei++] = f3.x; edgePosArr[ei++] = f3.y; edgePosArr[ei++] = f3.z;
+      edgePosArr[ei++] = t3.x; edgePosArr[ei++] = t3.y; edgePosArr[ei++] = t3.z;
+    }
+    const edgeAttr = new THREE.BufferAttribute(edgePosArr, 3);
+    edgeAttr.setUsage(THREE.DynamicDrawUsage);
+    const edgeGeom = new THREE.BufferGeometry();
+    edgeGeom.setAttribute('position', edgeAttr);
+    edgeLineSegs = new THREE.LineSegments(edgeGeom, lineMat);
+    scene.add(edgeLineSegs);
+  }
+
+  // Arrow cones — created once, positions/orientations updated per frame.
+  function addCone3D(fromIdx, toIdx, vFrom, vTo, t) {
     const dir  = new THREE.Vector3().subVectors(vTo, vFrom).normalize();
     const cone = new THREE.Mesh(coneGeom, arrowMat);
     cone.position.copy(new THREE.Vector3().lerpVectors(vFrom, vTo, t));
-    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    if (dir.lengthSq() > 1e-6) cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     scene.add(cone);
+    arrowCones.push({ cone, fromIdx, toIdx, t });
   }
 
-  for (const [from, to] of graph.getEdges()) {
-    const pf = layout.getPosition(from);
-    const pt = layout.getPosition(to);
-
-    const f3 = to3D(pf.x, pf.y, pf.z);
-    const t3 = to3D(pt.x, pt.y, pt.z);
+  for (const [from, to] of edges3D) {
+    const pf = layout.getPosition(from), pt = layout.getPosition(to);
+    const f3 = to3D(pf.x, pf.y, pf.z),  t3 = to3D(pt.x, pt.y, pt.z);
     const vFrom = new THREE.Vector3(f3.x, f3.y, f3.z);
     const vTo   = new THREE.Vector3(t3.x, t3.y, t3.z);
     if (vFrom.distanceTo(vTo) < 0.001) continue;
 
-    const lineGeom = new THREE.BufferGeometry().setFromPoints([vFrom, vTo]);
-    scene.add(new THREE.Line(lineGeom, lineMat));
-
     if (graph.type === 'directed') {
-      addCone3D(vFrom, vTo, 0.8);
+      addCone3D(from, to, vFrom, vTo, 0.8);
     } else if (graph.type === 'bidirectional') {
-      addCone3D(vFrom, vTo, 0.75);
-      addCone3D(vTo, vFrom, 0.75);
+      addCone3D(from, to, vFrom, vTo, 0.75);
+      addCone3D(to, from, vTo, vFrom, 0.75);
     }
     // 'undirected': no cones
+  }
+
+  // ── Per-frame position updater (used by animate when dynamicSpacing is on) ──
+  function _update3DPositions() {
+    // Node meshes + label/value sprites
+    for (const [idx, mesh] of nodeMeshes) {
+      if (!layout.positions.has(idx)) continue;
+      const pos = layout.getPosition(idx);
+      const wx = pos.x - cx3, wy = -(pos.y - cy3), wz = pos.z ?? 0;
+      mesh.position.set(wx, wy, wz);
+      const ls = labelSprites.get(idx);
+      if (ls) ls.position.set(wx, wy + 5, wz + 0.5);
+      const vs = valueSprites.get(idx);
+      if (vs) vs.position.set(wx, wy - 7, wz + 0.5);
+    }
+
+    // Edge line segments — rewrite the position buffer in one shot
+    if (edgeLineSegs) {
+      const arr = edgeLineSegs.geometry.attributes.position.array;
+      let ei = 0;
+      for (const [from, to] of edges3D) {
+        if (layout.positions.has(from) && layout.positions.has(to)) {
+          const pf = layout.getPosition(from), pt = layout.getPosition(to);
+          arr[ei++] = pf.x - cx3; arr[ei++] = -(pf.y - cy3); arr[ei++] = pf.z ?? 0;
+          arr[ei++] = pt.x - cx3; arr[ei++] = -(pt.y - cy3); arr[ei++] = pt.z ?? 0;
+        } else { ei += 6; }
+      }
+      edgeLineSegs.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // Arrow cones — update position + orientation
+    for (const { cone, fromIdx, toIdx, t } of arrowCones) {
+      if (!layout.positions.has(fromIdx) || !layout.positions.has(toIdx)) continue;
+      const pf = layout.getPosition(fromIdx), pt = layout.getPosition(toIdx);
+      const vF = new THREE.Vector3(pf.x - cx3, -(pf.y - cy3), pf.z ?? 0);
+      const vT = new THREE.Vector3(pt.x - cx3, -(pt.y - cy3), pt.z ?? 0);
+      cone.position.lerpVectors(vF, vT, t);
+      const dir = new THREE.Vector3().subVectors(vT, vF).normalize();
+      if (dir.lengthSq() > 1e-6) cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    }
   }
 
   // ── Animate ────────────────────────────────────────────────
   function animate() {
     threeState.animId = requestAnimationFrame(animate);
     controls.update();
+    if (dynamicSpacing) {
+      layout.tick(graph);
+      _update3DPositions();
+    }
     renderer.render(scene, camera);
   }
 
@@ -731,7 +853,12 @@ window.render3D = function() {
   }
   window.addEventListener('resize', onResize);
 
-  threeState = { renderer, scene, camera, controls, animId: null };
+  threeState = {
+    renderer, scene, camera, controls, animId: null,
+    nodeMeshes, labelSprites, valueSprites,
+    edgeLineSegs, edges3D, arrowCones,
+    cx3, cy3,
+  };
   animate();
 };
 

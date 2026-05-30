@@ -140,6 +140,13 @@ class ForceDirectedLayout {
     this.depth         = options.depth         ?? 200;
     this.coolingFactor = options.coolingFactor ?? 0.97;
 
+    // Live-simulation state for dynamic spatial adjustment (toggled by the viewer).
+    // liveTemperature decays toward liveFloor each tick(); boostTemperature() injects
+    // energy after topology changes so the layout can re-optimise without big jumps.
+    this.liveTemperature    = 0;
+    this.liveFloor          = 0.3;
+    this.liveSpeedMultiplier = 1.0; // scaled by the UI speed slider (0.1 = slow, 1.0 = default, 2.0 = fast)
+
     /**
      * Current positions: map from node index to coordinate array [x, y] or [x, y, z].
      * Persists between `update()` calls so the layout can be refined incrementally.
@@ -226,6 +233,35 @@ class ForceDirectedLayout {
         y: pos[1],
         ...(this.dimensions === 3 ? { z: pos[2] } : {}),
       }));
+  }
+
+  // ── Live simulation (dynamic spatial adjustment) ──────────────────────────
+
+  /**
+   * Advance the layout by a few iterations at the current live temperature.
+   * Call this every animation frame when dynamic spatial adjustment is enabled.
+   * Temperature decays toward `liveFloor` so nodes settle without disappearing.
+   *
+   * @param {DirectedGraph} graph
+   * @param {number} [iters=2]
+   */
+  tick(graph, iters = 2) {
+    const floor = this.liveFloor * this.liveSpeedMultiplier;
+    this._runIterations(graph, iters, Math.max(floor, this.liveTemperature));
+    this.liveTemperature = Math.max(
+      floor,
+      this.liveTemperature * Math.pow(this.coolingFactor, iters)
+    );
+  }
+
+  /**
+   * Inject a small burst of energy after a topology change so the layout can
+   * re-optimise the new neighbourhood without causing large jumps in existing nodes.
+   */
+  boostTemperature() {
+    const s   = this.liveSpeedMultiplier;
+    const max = this._initialTemperature() * 0.3  * s;
+    this.liveTemperature = Math.min(max, this.liveTemperature + this._initialTemperature() * 0.15 * s);
   }
 
   // ── Internal — initialisation ─────────────────────────────────────────────
