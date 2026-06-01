@@ -379,11 +379,14 @@ class ForceDirectedLayout {
         const d = disp.get(u);
         clampMagnitude(d, t);
         vecAddInPlace(pos, d);
-        // Keep nodes within the bounding box
-        pos[0] = Math.max(-this.width  / 2, Math.min(this.width  / 2, pos[0]));
-        pos[1] = Math.max(-this.height / 2, Math.min(this.height / 2, pos[1]));
-        if (this.dimensions === 3) {
-          pos[2] = Math.max(-this.depth / 2, Math.min(this.depth / 2, pos[2]));
+        // Keep nodes within a sphere (radius = half the smallest dimension)
+        const radius = Math.min(this.width, this.height, this.dimensions === 3 ? this.depth : Infinity) / 2;
+        let rMag = 0;
+        for (const c of pos) rMag += c * c;
+        rMag = Math.sqrt(rMag);
+        if (rMag > radius) {
+          const s = radius / rMag;
+          for (let i = 0; i < pos.length; i++) pos[i] *= s;
         }
       }
 

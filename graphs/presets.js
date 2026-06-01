@@ -152,12 +152,78 @@ function buildBinaryLattice2D(rows = 5, cols = 5) {
 }
 
 // ---------------------------------------------------------------------------
+// buildSphereLattice2D
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an undirected binary 2D lattice graph whose nodes lie on the surface
+ * of a sphere (latitude-longitude grid).
+ *
+ * All node states start at 0.  Longitude edges wrap around (last column
+ * connects back to the first), while latitude edges do not (the top and
+ * bottom rows are open borders — no degenerate pole nodes).
+ *
+ * θ is kept strictly inside (0, π) so no two nodes collapse to the same
+ * pole point; φ covers the full [0, 2π) circle with wrap-around connectivity.
+ *
+ * Topology example (2 rows × 4 cols):
+ *
+ *   0,0 — 0,1 — 0,2 — 0,3 —(wraps)— 0,0
+ *    |     |     |     |
+ *   1,0 — 1,1 — 1,2 — 1,3 —(wraps)— 1,0
+ *
+ * @param {number}  [rows=6]
+ * @param {number}  [cols=8]
+ * @param {number}  [radius=80]        - Sphere radius in layout units.
+ * @param {boolean} [randomStates=false] - If true, each node starts with a random binary state.
+ * @returns {Graph}
+ */
+function buildSphereLattice2D(rows = 6, cols = 8, radius = 80, randomStates = false) {
+  const g = new Graph({ type: 'undirected', valueType: 'binary' });
+  const ids = [];
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      ids.push(g.addNode({ label: `${r},${c}`, state: randomStates ? Math.round(Math.random()) : 0 }));
+    }
+  }
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const id = ids[r * cols + c];
+      // Longitude: wrap around (last column → first column)
+      g.addEdge(id, ids[r * cols + ((c + 1) % cols)]);
+      // Latitude: no wrap (top and bottom rows are open borders)
+      if (r + 1 < rows) g.addEdge(id, ids[(r + 1) * cols + c]);
+    }
+  }
+
+  // Pre-compute positions on the sphere surface.
+  // θ ∈ (0, π) avoids degenerate poles; φ ∈ [0, 2π) wraps the longitude.
+  const positions = new Map();
+  for (let r = 0; r < rows; r++) {
+    const theta = ((r + 1) / (rows + 1)) * Math.PI;
+    for (let c = 0; c < cols; c++) {
+      const phi = (c / cols) * 2 * Math.PI;
+      positions.set(r * cols + c, [
+        radius * Math.sin(theta) * Math.cos(phi),
+        radius * Math.sin(theta) * Math.sin(phi),
+        radius * Math.cos(theta),
+      ]);
+    }
+  }
+  g.positions = positions;
+
+  return g;
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { buildExampleGraph, buildDirectedBinaryGraph, buildBinaryLattice2D };
+  module.exports = { buildExampleGraph, buildDirectedBinaryGraph, buildBinaryLattice2D, buildSphereLattice2D };
 } else {
   window.GraphCA = window.GraphCA || {};
-  Object.assign(window.GraphCA, { buildExampleGraph, buildDirectedBinaryGraph, buildBinaryLattice2D });
+  Object.assign(window.GraphCA, { buildExampleGraph, buildDirectedBinaryGraph, buildBinaryLattice2D, buildSphereLattice2D });
 }

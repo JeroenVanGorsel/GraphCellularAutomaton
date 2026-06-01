@@ -106,6 +106,65 @@
       background: transparent;
     }
     .dropdown-menu button:hover { background: #30363d; }
+
+    /* ── Rules panel ─────────────────────────────────── */
+    #rules-panel {
+      position: absolute;
+      top: 0; right: 0;
+      width: 272px;
+      height: 100%;
+      background: rgba(13, 15, 20, 0.97);
+      border-left: 1px solid #30363d;
+      overflow-y: auto;
+      padding: 14px;
+      z-index: 50;
+      display: none;
+      font-size: 13px;
+      scrollbar-width: thin;
+      scrollbar-color: #30363d transparent;
+    }
+    #rules-panel.open { display: block; }
+    #rules-panel h2 {
+      font-size: 14px; font-weight: 600; color: #e6edf3;
+      margin-bottom: 12px; padding-bottom: 8px;
+      border-bottom: 1px solid #30363d;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #rules-panel h2 button {
+      padding: 2px 8px; font-size: 12px; border-radius: 4px;
+    }
+    .rule-section {
+      margin-bottom: 14px; padding-bottom: 12px;
+      border-bottom: 1px solid #21262d;
+    }
+    .rule-section h3 {
+      font-size: 11px; font-weight: 600; color: #8b949e;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 7px;
+    }
+    .rule-section select {
+      width: 100%; padding: 5px 8px; border-radius: 6px;
+      border: 1px solid #30363d; background: #21262d;
+      color: #c9d1d9; font-size: 12px; margin-bottom: 8px;
+      box-sizing: border-box; cursor: pointer;
+    }
+    .rule-param {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
+    }
+    .rule-param label { font-size: 11px; color: #8b949e; min-width: 88px; flex-shrink: 0; }
+    .rule-param input[type=range] { flex: 1; cursor: pointer; accent-color: #388bfd; }
+    .rule-param .pv { font-size: 11px; color: #c9d1d9; min-width: 38px; text-align: right; font-family: monospace; }
+    .rule-param input[type=number] {
+      width: 58px; padding: 3px 6px; border-radius: 5px;
+      border: 1px solid #30363d; background: #21262d;
+      color: #c9d1d9; font-size: 12px;
+    }
+    .preset-btn {
+      padding: 3px 8px; font-size: 11px; border-radius: 4px;
+      border: 1px solid #30363d; background: #21262d;
+      color: #8b949e; cursor: pointer; white-space: nowrap;
+    }
+    .preset-btn:hover { background: #30363d; color: #e6edf3; }
   </style>
 </head>
 <body>
@@ -114,8 +173,8 @@
 <div id="toolbar">
   <h1>Graph Cellular Automata</h1>
 
-  <button id="btn-2d" class="active" onclick="setMode('2d')">2D View</button>
-  <button id="btn-3d"              onclick="setMode('3d')">3D View</button>
+  <button id="btn-2d"              onclick="setMode('2d')">2D View</button>
+  <button id="btn-3d" class="active" onclick="setMode('3d')">3D View</button>
 
   <span style="width:1px; height:20px; background:#30363d;"></span>
 
@@ -125,13 +184,15 @@
     <div class="dropdown-menu">
       <button onclick="resetGraph('example')">Example graph</button>
       <button onclick="resetGraph('lattice2d')">Binary 2D lattice (5&#xD7;5)</button>
+      <button onclick="resetGraph('sphereLattice2d')">Sphere 2D lattice (6&#xD7;8)</button>
+      <button onclick="resetGraph('sphereLattice2dRandom')">Sphere 2D lattice &#8212; random (12&#xD7;24)</button>
     </div>
   </div>
   <button onclick="fitView()">Fit view</button>
 
   <span style="width:1px; height:20px; background:#30363d;"></span>
 
-  <button id="btn-labels" class="active" onclick="toggleLabels()">Labels</button>
+  <button id="btn-labels"              onclick="toggleLabels()">Labels</button>
   <button id="btn-values"              onclick="toggleValues()">Values</button>
 
   <span style="width:1px; height:20px; background:#30363d;"></span>
@@ -149,21 +210,173 @@
   </select>
 
   <span style="width:1px; height:20px; background:#30363d;"></span>
-  <button id="btn-dynamic" onclick="toggleDynamicSpacing()" title="Continuously run force-directed layout so nodes drift to their optimal positions">Dynamic Spacing</button>
+  <button id="btn-dynamic" class="active" onclick="toggleDynamicSpacing()" title="Continuously run force-directed layout so nodes drift to their optimal positions">Dynamic Spacing</button>
   <label for="slider-dynamic-speed" style="font-size:12px;color:#8b949e;">Speed</label>
-  <input type="range" id="slider-dynamic-speed" min="1" max="20" value="10" step="1"
+  <input type="range" id="slider-dynamic-speed" min="1" max="20" value="2" step="1"
     oninput="onDynamicSpeedChange(this.value)"
     style="width:72px;cursor:pointer;vertical-align:middle;"
     title="Dynamic layout speed (1 = slow · 10 = default · 20 = fast)">
+
+  <span style="width:1px; height:20px; background:#30363d;"></span>
+  <button id="btn-rules" onclick="toggleRulesPanel()">Rules</button>
 
   <div id="info">nodes: — &nbsp;|&nbsp; edges: —</div>
 </div>
 
 <!-- ─────────────────────────── CANVAS ──────────────────────────────────── -->
 <div id="canvas-container">
-  <canvas id="canvas-2d"></canvas>
+  <canvas id="canvas-2d" style="display:none;"></canvas>
   <!-- Three.js mounts its renderer here -->
-  <div id="renderer-3d" style="display:none; width:100%; height:100%;"></div>
+  <div id="renderer-3d" style="width:100%; height:100%;"></div>
+
+  <!-- ─── Rules configuration panel ─────────────────────────────────── -->
+  <div id="rules-panel">
+    <h2>Evolution Rules <button onclick="toggleRulesPanel()">✕</button></h2>
+
+    <!-- STATE RULE -->
+    <div class="rule-section">
+      <h3>Node State Rule</h3>
+      <select id="sel-state-rule" onchange="onStateRuleChange()">
+        <option value="none">None (keep states)</option>
+        <option value="interval">Interval / Conway-style</option>
+        <option value="fractionalThreshold">Fractional Threshold</option>
+        <option value="majorityVote">Majority Vote</option>
+        <option value="lenia">Lenia (continuous)</option>
+        <option value="reactionDiffusion">Reaction-Diffusion (Gray-Scott)</option>
+      </select>
+      <div id="params-state-interval" style="display:none">
+        <!-- Classic CA presets -->
+        <div style="font-size:11px;color:#8b949e;margin-bottom:5px;">Classic rules</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:9px;">
+          <button class="preset-btn" onclick="setIntervalPreset('3','23')"   title="Conway Life — B3/S23">Life</button>
+          <button class="preset-btn" onclick="setIntervalPreset('36','23')"  title="HighLife — B36/S23">HighLife</button>
+          <button class="preset-btn" onclick="setIntervalPreset('3678','34678')" title="Day &amp; Night — B3678/S34678">Day&amp;Night</button>
+          <button class="preset-btn" onclick="setIntervalPreset('368','245')" title="Morley/Move — B368/S245">Morley</button>
+          <button class="preset-btn" onclick="setIntervalPreset('4678','35678')" title="Anneal — B4678/S35678">Anneal</button>
+        </div>
+        <!-- Network-tuned presets -->
+        <div style="font-size:11px;color:#8b949e;margin-bottom:5px;">Network-tuned</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:9px;">
+          <button class="preset-btn" onclick="setIntervalPreset('23','23')"  title="Rich local oscillation">Oscillate</button>
+          <button class="preset-btn" onclick="setIntervalPreset('356','23')" title="Replicating clusters (HighLife analogue)">Replicate</button>
+          <button class="preset-btn" onclick="setIntervalPreset('234','345')" title="Day&amp;Night domain competition">Compete</button>
+        </div>
+        <!-- Manual inputs -->
+        <div class="rule-param" style="align-items:flex-start;flex-direction:column;gap:3px;">
+          <label style="min-width:unset;">Birth B{…}</label>
+          <input type="text" id="sr-birth-set" value="3" placeholder="e.g. 3  or  3,6"
+            style="width:100%;padding:5px 8px;border-radius:5px;border:1px solid #30363d;
+                   background:#21262d;color:#c9d1d9;font-size:12px;font-family:monospace;box-sizing:border-box;">
+        </div>
+        <div class="rule-param" style="align-items:flex-start;flex-direction:column;gap:3px;margin-top:4px;">
+          <label style="min-width:unset;">Survive S{…}</label>
+          <input type="text" id="sr-survive-set" value="23" placeholder="e.g. 23  or  2,3,6"
+            style="width:100%;padding:5px 8px;border-radius:5px;border:1px solid #30363d;
+                   background:#21262d;color:#c9d1d9;font-size:12px;font-family:monospace;box-sizing:border-box;">
+        </div>
+        <div style="font-size:11px;color:#8b949e;margin-top:5px;">
+          Enter digits run-on (<code style="color:#c9d1d9">23</code>) or comma-separated (<code style="color:#c9d1d9">2,3,6</code>). Uses absolute live-neighbour count.
+        </div>
+      </div>
+      <div id="params-state-fractionalThreshold" style="display:none">
+        <div class="rule-param"><label>Threshold κ</label><input type="range" id="sr-threshold" min="0" max="1" step="0.01" value="0.3" oninput="syncParam(this,'sr-threshold-v')"><span id="sr-threshold-v" class="pv">0.30</span></div>
+      </div>
+      <div id="params-state-majorityVote" style="display:none">
+        <div style="font-size:11px;color:#8b949e;">Node → 1 if more than half neighbours are alive. No parameters.</div>
+      </div>
+      <div id="params-state-lenia" style="display:none">
+        <div class="rule-param"><label>dt (step)</label><input type="range" id="sr-lenia-dt" min="0.01" max="0.5" step="0.01" value="0.1" oninput="syncParam(this,'sr-lenia-dt-v')"><span id="sr-lenia-dt-v" class="pv">0.10</span></div>
+        <div class="rule-param"><label>μ (peak)</label><input type="range" id="sr-lenia-mu" min="0.01" max="0.99" step="0.01" value="0.15" oninput="syncParam(this,'sr-lenia-mu-v')"><span id="sr-lenia-mu-v" class="pv">0.15</span></div>
+        <div class="rule-param"><label>σ (width)</label><input type="range" id="sr-lenia-sigma" min="0.001" max="0.3" step="0.001" value="0.015" oninput="syncParam(this,'sr-lenia-sigma-v')"><span id="sr-lenia-sigma-v" class="pv">0.015</span></div>
+        <div style="font-size:11px;color:#8b949e;margin-top:4px;">Works best with float-valued nodes.</div>
+      </div>
+      <div id="params-state-reactionDiffusion" style="display:none">
+        <div class="rule-param"><label>Du (activator)</label><input type="range" id="sr-rd-Du" min="0.01" max="0.5" step="0.01" value="0.16" oninput="syncParam(this,'sr-rd-Du-v')"><span id="sr-rd-Du-v" class="pv">0.16</span></div>
+        <div class="rule-param"><label>Dv (inhibitor)</label><input type="range" id="sr-rd-Dv" min="0.01" max="0.5" step="0.01" value="0.08" oninput="syncParam(this,'sr-rd-Dv-v')"><span id="sr-rd-Dv-v" class="pv">0.08</span></div>
+        <div class="rule-param"><label>f (feed)</label><input type="range" id="sr-rd-f" min="0.001" max="0.1" step="0.001" value="0.035" oninput="syncParam(this,'sr-rd-f-v')"><span id="sr-rd-f-v" class="pv">0.035</span></div>
+        <div class="rule-param"><label>k (kill)</label><input type="range" id="sr-rd-k" min="0.001" max="0.1" step="0.001" value="0.065" oninput="syncParam(this,'sr-rd-k-v')"><span id="sr-rd-k-v" class="pv">0.065</span></div>
+        <div style="font-size:11px;color:#8b949e;margin-top:4px;">Initialises u/v on first step. State = u concentration.</div>
+      </div>
+    </div>
+
+    <!-- BIRTH RULE -->
+    <div class="rule-section">
+      <h3>Node Birth Rule</h3>
+      <select id="sel-birth-rule" onchange="onBirthRuleChange()">
+        <option value="random"                title="Each step, adds a new node connected to a random existing node with a fixed probability.">Random</option>
+        <option value="none"                  title="No new nodes are ever added; the graph population stays fixed.">None (no births)</option>
+        <option value="division"              title="A node in the trigger state occasionally spawns a child node connected directly to it.">Cell Division (GRA)</option>
+        <option value="preferentialAttachment" title="New nodes attach preferentially to already high-degree nodes (Barabási–Albert rich-get-richer).">Preferential Attachment</option>
+        <option value="triangleClosing"       title="Inserts a new node between two live nodes that share no common neighbour, closing open triangles.">Triangle Closing</option>
+        <option value="poisson"               title="New nodes arrive as a Poisson process at a constant birth rate independent of current state.">Poisson Process</option>
+      </select>
+      <div id="params-birth-random">
+        <div class="rule-param"><label>Probability</label><input type="range" id="br-prob" min="0" max="1" step="0.01" value="0.5" oninput="syncParam(this,'br-prob-v')"><span id="br-prob-v" class="pv">0.50</span></div>
+      </div>
+      <div id="params-birth-none" style="display:none"></div>
+      <div id="params-birth-division" style="display:none">
+        <div class="rule-param"><label>Trigger state</label><input type="number" id="br-div-state" value="1" min="0" max="1" oninput="syncParam(this,'br-div-state-v')"><span id="br-div-state-v" class="pv">1</span></div>
+        <div class="rule-param"><label>Probability</label><input type="range" id="br-div-prob" min="0.01" max="1" step="0.01" value="0.1" oninput="syncParam(this,'br-div-prob-v')"><span id="br-div-prob-v" class="pv">0.10</span></div>
+      </div>
+      <div id="params-birth-preferentialAttachment" style="display:none">
+        <div class="rule-param"><label>Edges to attach</label><input type="number" id="br-pa-edges" value="2" min="1" max="10" oninput="syncParam(this,'br-pa-edges-v')"><span id="br-pa-edges-v" class="pv">2</span></div>
+      </div>
+      <div id="params-birth-triangleClosing" style="display:none">
+        <div class="rule-param"><label>Probability</label><input type="range" id="br-tri-prob" min="0.01" max="1" step="0.01" value="0.1" oninput="syncParam(this,'br-tri-prob-v')"><span id="br-tri-prob-v" class="pv">0.10</span></div>
+        <div style="font-size:11px;color:#8b949e;">Needs live nodes (state=1). Only fires when two live nodes share no common neighbour.</div>
+      </div>
+      <div id="params-birth-poisson" style="display:none">
+        <div class="rule-param"><label>Birth rate λ</label><input type="range" id="br-poi-rate" min="0.01" max="1" step="0.01" value="0.1" oninput="syncParam(this,'br-poi-rate-v')"><span id="br-poi-rate-v" class="pv">0.10</span></div>
+      </div>
+    </div>
+
+    <!-- REMOVAL RULE -->
+    <div class="rule-section">
+      <h3>Node Removal Rule</h3>
+      <select id="sel-removal-rule" onchange="onRemovalRuleChange()">
+        <option value="random"          title="Each step, removes a node with a fixed probability regardless of its state or neighbourhood.">Random</option>
+        <option value="none"            title="No nodes are ever removed; the graph population can only grow.">None (no removals)</option>
+        <option value="stateCondition"  title="Removes a node only after it has been in the dead state with exclusively dead neighbours for N consecutive steps.">State Condition</option>
+        <option value="degreeZero"      title="Immediately removes any node that becomes isolated (loses all its edges).">Degree Zero</option>
+        <option value="poisson"         title="Nodes are removed as a Poisson process; dead nodes are removed faster than alive ones.">Poisson Process</option>
+        <option value="adaptiveShedding" title="Active nodes gradually shed edges; frozen nodes gain edges; nodes that end up isolated are pruned.">Adaptive Link Shedding</option>
+      </select>
+      <div id="params-removal-random">
+        <div class="rule-param"><label>Probability</label><input type="range" id="rr-prob" min="0" max="1" step="0.01" value="0.5" oninput="syncParam(this,'rr-prob-v')"><span id="rr-prob-v" class="pv">0.50</span></div>
+      </div>
+      <div id="params-removal-none" style="display:none"></div>
+      <div id="params-removal-stateCondition" style="display:none">
+        <div class="rule-param"><label>Dead state</label><input type="number" id="rr-sc-state" value="0" min="0" max="1" oninput="syncParam(this,'rr-sc-state-v')"><span id="rr-sc-state-v" class="pv">0</span></div>
+        <div class="rule-param"><label>Dead streak</label><input type="number" id="rr-sc-streak" value="3" min="1" max="20" oninput="syncParam(this,'rr-sc-streak-v')"><span id="rr-sc-streak-v" class="pv">3</span></div>
+        <div style="font-size:11px;color:#8b949e;">Remove node after N steps in dead state with all-dead neighbours.</div>
+      </div>
+      <div id="params-removal-degreeZero" style="display:none">
+        <div style="font-size:11px;color:#8b949e;">Remove any node that loses all its edges. No parameters.</div>
+      </div>
+      <div id="params-removal-poisson" style="display:none">
+        <div class="rule-param"><label>Rate (dead)</label><input type="range" id="rr-poi-dead" min="0.001" max="0.5" step="0.001" value="0.05" oninput="syncParam(this,'rr-poi-dead-v')"><span id="rr-poi-dead-v" class="pv">0.050</span></div>
+        <div class="rule-param"><label>Rate (alive)</label><input type="range" id="rr-poi-alive" min="0.001" max="0.5" step="0.001" value="0.01" oninput="syncParam(this,'rr-poi-alive-v')"><span id="rr-poi-alive-v" class="pv">0.010</span></div>
+      </div>
+      <div id="params-removal-adaptiveShedding" style="display:none">
+        <div class="rule-param"><label>Shed rate</label><input type="range" id="rr-as-shed" min="0.01" max="0.5" step="0.01" value="0.1" oninput="syncParam(this,'rr-as-shed-v')"><span id="rr-as-shed-v" class="pv">0.10</span></div>
+        <div class="rule-param"><label>Gain rate</label><input type="range" id="rr-as-gain" min="0.01" max="0.5" step="0.01" value="0.05" oninput="syncParam(this,'rr-as-gain-v')"><span id="rr-as-gain-v" class="pv">0.05</span></div>
+        <div style="font-size:11px;color:#8b949e;">Active nodes shed edges; frozen nodes gain edges; isolated nodes pruned.</div>
+      </div>
+    </div>
+
+    <!-- GLOBAL -->
+    <div class="rule-section" style="border:none;margin:0;padding:0;">
+      <h3>Global</h3>
+      <div class="rule-param">
+        <label>Min nodes</label>
+        <input type="number" id="rr-min-nodes" value="3" min="1" max="100" oninput="syncParam(this,'rr-min-nodes-v')">
+        <span id="rr-min-nodes-v" class="pv">3</span>
+      </div>
+      <div style="font-size:11px;color:#8b949e;margin-top:8px;">
+        Tip: combining <em>Fractional Threshold</em> state + <em>Triangle Closing</em> birth + <em>Adaptive Shedding</em> removal produces the richest dynamics.
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ─────────────────────────── LEGEND ──────────────────────────────────── -->
@@ -223,14 +436,14 @@ window.onerror = function(msg, src, line, col, err) {
 // and as top-level global declarations, so no re-importing is needed here.
 
 // ── Shared state ────────────────────────────────────────────────────────────
-let graph   = buildExampleGraph();
+let graph   = buildSphereLattice2D(12, 24, 80, true);
 let layout  = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
 let positions;   // Map<nodeIndex, [x, y, z]>
 
-let currentMode    = '2d';
-let showLabels     = true;
+let currentMode    = '3d';
+let showLabels     = false;
 let showValues     = false;
-let dynamicSpacing = false;
+let dynamicSpacing = true;
 let _dynamicAnimId = null; // rAF id for the 2D dynamic-layout loop
 
 // Bootstrap runs at the bottom of this script, after render2D and render3D are defined.
@@ -339,6 +552,24 @@ function resetGraph(preset) {
     for (const [idx, pos] of graph.positions) layout.positions.set(idx, pos);
     positions = layout.positions;
     if (currentMode === '2d') { window.fitView2D(); } else { render3D(); }
+  } else if (preset === 'sphereLattice2d') {
+    graph = buildSphereLattice2D();
+    _scene3DCentroid = null;
+    layout = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
+    layout.liveSpeedMultiplier =
+      parseFloat(document.getElementById('slider-dynamic-speed').value) / 10;
+    for (const [idx, pos] of graph.positions) layout.positions.set(idx, pos);
+    positions = layout.positions;
+    if (currentMode === '2d') { window.fitView2D(); } else { render3D(); }
+  } else if (preset === 'sphereLattice2dRandom') {
+    graph = buildSphereLattice2D(12, 24, 80, true);
+    _scene3DCentroid = null;
+    layout = new ForceDirectedLayout({ dimensions: 3, iterations: 400 });
+    layout.liveSpeedMultiplier =
+      parseFloat(document.getElementById('slider-dynamic-speed').value) / 10;
+    for (const [idx, pos] of graph.positions) layout.positions.set(idx, pos);
+    positions = layout.positions;
+    if (currentMode === '2d') { window.fitView2D(); } else { render3D(); }
   } else {
     graph = buildExampleGraph();
     recomputeLayout();
@@ -375,6 +606,7 @@ function toggleEvolution() {
     GraphEvolution.start(graph, layout, {
       intervalMs: _getEvolutionInterval(),
       onStep: _evolveOnStep,
+      rules: getRulesConfig(),
     });
     btn.textContent = '⏸ Pause';
     btn.classList.add('active');
@@ -383,7 +615,7 @@ function toggleEvolution() {
 
 /** Fire a single evolution step manually. Works whether auto-loop is running or not. */
 function stepEvolution() {
-  _evolveOnStep(GraphEvolution.step(graph, layout), GraphEvolution.getStepCount());
+  _evolveOnStep(GraphEvolution.step(graph, layout, getRulesConfig()), GraphEvolution.getStepCount());
 }
 
 /** When the speed selector changes, restart the loop at the new interval. */
@@ -393,6 +625,7 @@ function onSpeedChange() {
   GraphEvolution.start(graph, layout, {
     intervalMs: _getEvolutionInterval(),
     onStep: _evolveOnStep,
+    rules: getRulesConfig(),
   });
 }
 
@@ -920,15 +1153,150 @@ window.render3D = function() {
   animate();
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RULES PANEL
+// ═══════════════════════════════════════════════════════════════════════════
+
+function toggleRulesPanel() {
+  const panel = document.getElementById('rules-panel');
+  const btn   = document.getElementById('btn-rules');
+  const open  = panel.classList.toggle('open');
+  btn.classList.toggle('active', open);
+}
+
+/**
+ * Sync a range/number input value to its adjacent display span.
+ * Derives decimal places from the input's step attribute.
+ */
+function syncParam(input, spanId) {
+  const span = document.getElementById(spanId);
+  if (!span) return;
+  const step = parseFloat(input.step) || 1;
+  const v    = parseFloat(input.value);
+  const dec  = step < 0.01 ? 3 : step < 0.1 ? 3 : step < 1 ? 2 : 0;
+  span.textContent = dec === 0 ? String(Math.round(v)) : v.toFixed(dec);
+}
+
+function _showOnlyParam(prefix, key) {
+  document.querySelectorAll(`[id^="params-${prefix}-"]`).forEach(el => {
+    el.style.display = (el.id === `params-${prefix}-${key}`) ? '' : 'none';
+  });
+}
+
+function onStateRuleChange()   { _showOnlyParam('state',   document.getElementById('sel-state-rule').value); }
+function onBirthRuleChange()   { _showOnlyParam('birth',   document.getElementById('sel-birth-rule').value); }
+function onRemovalRuleChange() { _showOnlyParam('removal', document.getElementById('sel-removal-rule').value); }
+
+function _v(id) { return parseFloat(document.getElementById(id).value); }
+function _i(id) { return parseInt(document.getElementById(id).value, 10); }
+
+/**
+ * Parse a B/S notation string into an array of integers.
+ * Accepts run-on digits ("23" → [2,3]) or comma-separated ("2,3,6" → [2,3,6]).
+ * Both formats are common in Life-like CA literature.
+ */
+function _parseSet(id) {
+  const raw = (document.getElementById(id).value || '').trim();
+  if (!raw) return [];
+  if (raw.includes(',')) {
+    return raw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+  }
+  return [...raw].map(c => parseInt(c, 10)).filter(n => !isNaN(n));
+}
+
+/**
+ * Load a B/S preset into the text inputs.
+ * @param {string} birth   — e.g. "3" or "36" or "3678"
+ * @param {string} survive — e.g. "23" or "34678"
+ */
+function setIntervalPreset(birth, survive) {
+  document.getElementById('sr-birth-set').value   = birth;
+  document.getElementById('sr-survive-set').value = survive;
+}
+
+/**
+ * Read the current rules panel and return a rules config for GraphEvolution.step().
+ * Returns null when the panel is set to legacy random-only mode (no state rule,
+ * both birth and removal on "random") so the original behaviour is preserved.
+ */
+function getRulesConfig() {
+  const st = document.getElementById('sel-state-rule').value;
+  const br = document.getElementById('sel-birth-rule').value;
+  const rr = document.getElementById('sel-removal-rule').value;
+
+  if (st === 'none' && br === 'random' && rr === 'random') return null;
+
+  return {
+    stateRule:   st === 'none' ? null : _buildStateRule(st),
+    birthRule:   br === 'none' ? null : _buildBirthRule(br),
+    removalRule: rr === 'none' ? null : _buildRemovalRule(rr),
+    minNodes:    _i('rr-min-nodes'),
+  };
+}
+
+function _buildStateRule(type) {
+  switch (type) {
+    case 'interval':            return { type,
+      birthSet:   _parseSet('sr-birth-set'),
+      surviveSet: _parseSet('sr-survive-set') };
+    case 'fractionalThreshold': return { type, threshold: _v('sr-threshold') };
+    case 'majorityVote':        return { type };
+    case 'lenia':               return { type, dt: _v('sr-lenia-dt'), mu: _v('sr-lenia-mu'), sigma: _v('sr-lenia-sigma') };
+    case 'reactionDiffusion':   return { type, Du: _v('sr-rd-Du'), Dv: _v('sr-rd-Dv'), f: _v('sr-rd-f'), k: _v('sr-rd-k') };
+    default: return null;
+  }
+}
+
+function _buildBirthRule(type) {
+  switch (type) {
+    case 'random':                return { type, probability: _v('br-prob') };
+    case 'division':              return { type, divisionState: _i('br-div-state'), triggerProbability: _v('br-div-prob') };
+    case 'preferentialAttachment':return { type, numEdges: _i('br-pa-edges') };
+    case 'triangleClosing':       return { type, probability: _v('br-tri-prob') };
+    case 'poisson':               return { type, birthRate: _v('br-poi-rate') };
+    default: return null;
+  }
+}
+
+function _buildRemovalRule(type) {
+  switch (type) {
+    case 'random':          return { type, probability: _v('rr-prob') };
+    case 'stateCondition':  return { type, deadState: _i('rr-sc-state'), deadStreak: _i('rr-sc-streak') };
+    case 'degreeZero':      return { type };
+    case 'poisson':         return { type, deathRate: _v('rr-poi-dead'), deathRateAlive: _v('rr-poi-alive') };
+    case 'adaptiveShedding':return { type, shedRate: _v('rr-as-shed'), gainRate: _v('rr-as-gain') };
+    default: return null;
+  }
+}
+
 // ── Bootstrap — runs last, after render2D and render3D are both defined ──────
 try {
-  positions = layout.compute(graph);
+  // Sphere lattice has pre-computed positions — bypass force layout entirely.
+  for (const [idx, pos] of graph.positions) layout.positions.set(idx, pos);
+  positions = layout.positions;
+
+  // Set dynamic spacing speed to match the slider default of 2.
+  layout.liveSpeedMultiplier = 0.2;
+  layout.boostTemperature();
+
+  // Wire up default rules: Fractional Threshold + Triangle Closing + Adaptive Shedding.
+  document.getElementById('sel-state-rule').value  = 'fractionalThreshold';
+  document.getElementById('sel-birth-rule').value  = 'triangleClosing';
+  document.getElementById('sel-removal-rule').value = 'adaptiveShedding';
+  onStateRuleChange();
+  onBirthRuleChange();
+  onRemovalRuleChange();
+
+  // Open the rules panel.
+  toggleRulesPanel();
+
   updateInfoBar();
   updateLegend();
-  // Defer one frame so the browser finishes flex layout before we measure sizes.
+
+  // Defer one frame so the browser finishes flex layout before we measure the container.
   requestAnimationFrame(() => {
     window.resizeCanvas2D();
-    window.fitView2D();
+    setMode('3d');
   });
 } catch (e) {
   document.getElementById('info').textContent = 'Init error — see red banner';
